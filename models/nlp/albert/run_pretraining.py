@@ -63,6 +63,9 @@ from common.utils import (
 
 # See https://github.com/huggingface/transformers/issues/3782; this import must come last
 import herring.tensorflow as herring  # isort:skip
+import herringcommon as hc
+bucket_cap_bytes = int(64 * 1024 * 1024)
+hc.setBucketSize(bucket_cap_bytes) # TODO : Change to obfuscate herringcommon. This code does not use GradientTape, so need to pass it like this. 
 herring.init()
 
 if is_wandb_available():
