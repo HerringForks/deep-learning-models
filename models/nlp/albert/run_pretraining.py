@@ -76,6 +76,7 @@ if is_wandb_available():
 
 logger = logging.getLogger(__name__)
 
+tf.keras.mixed_precision.set_global_policy('mixed_float16')
 
 def mlm_loss_fn(
     prediction_logits: "[batch, max_seq_len (512), vocab_size]",
@@ -91,8 +92,9 @@ def mlm_loss_fn(
 
     denominator = tf.reduce_sum(label_weights) + 1e-5
 
-    cross_entropy_per_token = label_weights * tf.nn.sparse_softmax_cross_entropy_with_logits(
-        labels=label_ids, logits=logits_at_positions
+    #cross_entropy_per_token = label_weights * tf.nn.sparse_softmax_cross_entropy_with_logits(labels=label_ids, logits=logits_at_positions)
+    cross_entropy_per_token = label_weights * tf.cast(
+        tf.nn.sparse_softmax_cross_entropy_with_logits(labels=label_ids, logits=logits_at_positions), tf.float32
     )  # [b, num_masks]
     cross_entropy_numerator = tf.reduce_sum(cross_entropy_per_token)  # [1]
 
@@ -301,7 +303,7 @@ def validation_batch(model, batch, skip_mlm: bool, skip_sop: bool):
         mlm_loss, mlm_acc = mlm_loss_fn(
             prediction_logits=mlm_logits,
             label_positions=label_positions,
-            label_ids=label_ids,
+            #label_ids=label_ids,
             label_weights=label_weights,
         )
     # SOP calculation
@@ -452,9 +454,13 @@ def main():
     elif train_args.optimizer == "adamw":
         optimizer = get_adamw_optimizer(train_args)
 
-    optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(
-        optimizer, loss_scale="dynamic"
-    )
+    #optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(
+    #    optimizer, loss_scale="dynamic"
+    #)
+
+    optimizer = tf.keras.mixed_precision.LossScaleOptimizer(optimizer)
+    #optimizer = tf.keras.mixed_precision.LossScaleOptimizer(optimizer, dynamic=False, initial_scale=2**15)
+
     gradient_accumulator = GradientAccumulator()
 
     loaded_optimizer_weights = None
