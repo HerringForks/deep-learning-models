@@ -73,6 +73,9 @@ herring.init()
 if is_wandb_available():
     import wandb
 
+# Exclude Pack operator in XLA for 2.4 
+if not _PRE_TF_2_4_0:
+    os.environ['TF_XLA_FLAGS'] = "--tf_xla_auto_jit=1 --tf_xla_ops_to_cluster=Add,AddN,AddV2,All,ArgMax,AssignAddVariableOp,AssignVariableOp,BatchMatMulV2,BiasAdd,BiasAddGrad,Cast,ConcatV2,Const,Equal,Erf,Exp,ExpandDims,GatherV2,Greater,GreaterEqual,Identity,IdentityN,If,IsFinite,L2Loss,LessEqual,MatMul,Maximum,Mean,Minimum,Mul,Neg,NoOp,PartitionedCall,Pow,RandomUniform,ReadVariableOp,RealDiv,Reciprocal,Reshape,ResourceGather,Rsqrt,RsqrtGrad,SelectV2,Softmax,SparseSoftmaxCrossEntropyWithLogits,Sqrt,Square,SquaredDifference,Squeeze,StatelessIf,StridedSlice,StridedSliceGrad,Sub,Sum,Tanh,TanhGrad,Tile,Transpose,UnsortedSegmentSum,VariableShape"
 
 logger = logging.getLogger(__name__)
 
@@ -303,7 +306,7 @@ def validation_batch(model, batch, skip_mlm: bool, skip_sop: bool):
         mlm_loss, mlm_acc = mlm_loss_fn(
             prediction_logits=mlm_logits,
             label_positions=label_positions,
-            #label_ids=label_ids,
+            label_ids=label_ids,
             label_weights=label_weights,
         )
     # SOP calculation
