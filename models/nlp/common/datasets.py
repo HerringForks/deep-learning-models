@@ -64,9 +64,9 @@ def get_dataset_from_tfrecords(
     # Shard and shuffle the filenames
     dataset = tf.data.Dataset.from_tensor_slices(filenames)
     if shard:
-        import smdistributed.dataparallel.tensorflow as herring
+        import smdistributed.dataparallel.tensorflow as smddp
 
-        dataset = dataset.shard(herring.size(), herring.rank())
+        dataset = dataset.shard(smddp.size(), smddp.rank())
     dataset = dataset.shuffle(buffer_size=len(filenames), reshuffle_each_iteration=True)
     dataset = dataset.repeat()
 

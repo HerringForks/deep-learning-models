@@ -2,7 +2,7 @@
 cd /shared/deep-learning-models/models/nlp/
 export PYTHONPATH=${PYTHONPATH}:${PWD}
 
-herringrun \
+smddprun \
 -x LD_LIBRARY_PATH \
 -x PATH \
 -x FI_PROVIDER="efa" \

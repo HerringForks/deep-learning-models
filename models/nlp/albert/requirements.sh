@@ -6,5 +6,5 @@ pip install --no-cache-dir \
         pandas \
         apache_beam \
         pyarrow==0.16 \
-        git+https://github.com/HerringForks/transformers.git@master \
+        git+https://github.com/smddpForks/transformers.git@master \
         git+https://github.com/huggingface/nlp.git@703b761

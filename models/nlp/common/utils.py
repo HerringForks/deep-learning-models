@@ -25,7 +25,7 @@ from transformers.data.processors.squad import (
 from common.arguments import ModelArguments
 
 # See https://github.com/huggingface/transformers/issues/3782; this import must come last
-import smdistributed.dataparallel.tensorflow as herring  # isort:skip
+import smdistributed.dataparallel.tensorflow as smddp  # isort:skip
 
 try:
     import wandb
@@ -145,7 +145,7 @@ def get_dataset(
         return dataset
     else:
         if shard:
-            dataset = dataset.shard(herring.size(), herring.rank())
+            dataset = dataset.shard(smddp.size(), smddp.rank())
         if shuffle:
             dataset = dataset.shuffle(buffer_size=1000, reshuffle_each_iteration=True)
         if repeat:

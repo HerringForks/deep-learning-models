@@ -64,11 +64,13 @@ from common.utils import (
 )
 
 # See https://github.com/huggingface/transformers/issues/3782; this import must come last
-import smdistributed.dataparallel.tensorflow as herring  # isort:skip
-import herringcommon as hc
+import smdistributed.dataparallel.tensorflow as smddp  # isort:skip
+
+import smddpcommon
 bucket_cap_bytes = int(64 * 1024 * 1024)
-hc.setBucketSize(bucket_cap_bytes) # TODO : Change to obfuscate herringcommon. This code does not use GradientTape, so need to pass it like this.
-herring.init()
+smddpcommon.setBucketSize(bucket_cap_bytes) # TODO : Change to obfuscate smddpcommon. This code does not use GradientTape, so need to pass it like this.
+
+smddp.init()
 
 if is_wandb_available():
     import wandb
@@ -208,7 +210,7 @@ def allreduce(model, optimizer, gradient_accumulator, loss, mlm_loss, mlm_acc, s
     )
 
     grads = [
-        herring.allreduce(grad, param_index=idx, num_params=len(grads), compression=herring.Compression.fp16) if grad is not None else None
+        smddp.allreduce(grad, param_index=idx, num_params=len(grads), compression=smddp.Compression.fp16) if grad is not None else None
         for idx, grad in enumerate(grads)
     ]
 
@@ -223,11 +225,11 @@ def allreduce(model, optimizer, gradient_accumulator, loss, mlm_loss, mlm_acc, s
     # Clear the gradient accumulator
     gradient_accumulator.reset()
 
-    loss = herring.oob_allreduce(loss)
-    mlm_loss = herring.oob_allreduce(mlm_loss)
-    mlm_acc = herring.oob_allreduce(mlm_acc)
-    sop_loss = herring.oob_allreduce(sop_loss)
-    sop_acc = herring.oob_allreduce(sop_acc)
+    loss = smddp.oob_allreduce(loss)
+    mlm_loss = smddp.oob_allreduce(mlm_loss)
+    mlm_acc = smddp.oob_allreduce(mlm_acc)
+    sop_loss = smddp.oob_allreduce(sop_loss)
+    sop_acc = smddp.oob_allreduce(sop_acc)
 
     return loss, mlm_loss, mlm_acc, sop_loss, sop_acc, grad_norm, weight_norm
 
@@ -408,12 +410,12 @@ def main():
     for gpu in gpus:
         tf.config.experimental.set_memory_growth(gpu, True)
     if gpus:
-        tf.config.set_visible_devices(gpus[herring.local_rank()], "GPU")
+        tf.config.set_visible_devices(gpus[smddp.local_rank()], "GPU")
     # XLA, AutoGraph
     tf.config.optimizer.set_jit(do_xla)
     tf.config.experimental_run_functions_eagerly(do_eager)
 
-    if herring.rank() == 0:
+    if smddp.rank() == 0:
         # Run name should only be used on one process to avoid race conditions
         current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         platform = "sm" if is_sagemaker else "eks"
@@ -429,8 +431,8 @@ def main():
                 f"{model_args.model_type}"
                 f"-{model_args.model_size}"
                 f"-{model_args.load_from}"
-                f"-{herring.size()}gpus"
-                f"-{train_args.per_gpu_batch_size * herring.size() * train_args.gradient_accumulation_steps}globalbatch"
+                f"-{smddp.size()}gpus"
+                f"-{train_args.per_gpu_batch_size * smddp.size() * train_args.gradient_accumulation_steps}globalbatch"
                 f"-{train_args.learning_rate}maxlr"
                 f"-{train_args.learning_rate_decay_power}power"
                 f"-{train_args.optimizer}opt"
@@ -484,7 +486,7 @@ def main():
     if model_args.load_from == "checkpoint":
         checkpoint_path = os.path.join(path_args.filesystem_prefix, model_args.checkpoint_path)
         model_ckpt, optimizer_ckpt = get_checkpoint_paths_from_prefix(checkpoint_path)
-        if herring.rank() == 0:
+        if smddp.rank() == 0:
             model.load_weights(model_ckpt)
             if model_args.load_optimizer_state == "true":
                 loaded_optimizer_weights = np.load(optimizer_ckpt, allow_pickle=True)
@@ -511,7 +513,7 @@ def main():
     train_dataset = train_dataset.prefetch(buffer_size=8)
 
     # Validation should only be done on one node, since Horovod doesn't allow allreduce on a subset of ranks
-    if herring.rank() == 0:
+    if smddp.rank() == 0:
         validation_dataset = get_dataset_from_tfrecords(
             model_type=model_args.model_type,
             filenames=validation_filenames,
@@ -545,14 +547,14 @@ def main():
 
         # Don't want to wrap broadcast_variables() in a tf.function, can lead to asynchronous errors
         if i == 1:
-            if herring.rank() == 0 and loaded_optimizer_weights is not None:
+            if smddp.rank() == 0 and loaded_optimizer_weights is not None:
                 optimizer.set_weights(loaded_optimizer_weights)
-            print (" RANK {} is broadcasting".format(herring.rank()))
-            #herring.broadcast_variables(model.variables + optimizer.variables(), root_rank=0)
-            herring.broadcast_variables(model.variables, root_rank=0)
-            herring.broadcast_variables(optimizer.variables(), root_rank=0)
-            print(" RANK {} is done broadcasting".format(herring.rank()))
-            # herring.broadcast_variables(optimizer.variables(), root_rank=0)
+            print (" RANK {} is broadcasting".format(smddp.rank()))
+            #smddp.broadcast_variables(model.variables + optimizer.variables(), root_rank=0)
+            smddp.broadcast_variables(model.variables, root_rank=0)
+            smddp.broadcast_variables(optimizer.variables(), root_rank=0)
+            print(" RANK {} is done broadcasting".format(smddp.rank()))
+            # smddp.broadcast_variables(optimizer.variables(), root_rank=0)
             i = optimizer.get_weights()[0]
 
         is_final_step = i >= train_args.total_steps
@@ -572,14 +574,14 @@ def main():
                 fast=log_args.fast_squad,
                 dummy_eval=log_args.dummy_eval,
             )
-            if herring.rank() == 0:
+            if smddp.rank() == 0:
                 squad_exact, squad_f1 = squad_results["exact"], squad_results["f1"]
                 logger.info(f"SQuAD step {i} -- F1: {squad_f1:.3f}, Exact: {squad_exact:.3f}")
             # Re-wrap autograph so it doesn't get arg mismatches
             wrap_global_functions(do_gradient_accumulation)
             gc.collect()
 
-        if herring.rank() == 0:
+        if smddp.rank() == 0:
             do_log = i % log_args.log_frequency == 0
             do_checkpoint = (log_args.checkpoint_frequency != 0) and (
                 (i % log_args.checkpoint_frequency == 0) or is_final_step
@@ -597,7 +599,7 @@ def main():
                     logger.info(f"First step: {elapsed_time:.3f} secs")
                 elif is_final_step:
                     total_time = time.perf_counter() - train_start_time
-                    seq_per_sec = i * train_args.per_gpu_batch_size * herring.size() * train_args.gradient_accumulation_steps / total_time
+                    seq_per_sec = i * train_args.per_gpu_batch_size * smddp.size() * train_args.gradient_accumulation_steps / total_time
                     logger.info(f"Final step {i}: {description} -- Average seq_per_sec: {seq_per_sec:.2f} -- Total Time: {total_time}")
                 else:
                     it_per_sec = log_args.log_frequency / elapsed_time
@@ -638,7 +640,7 @@ def main():
                     **asdict(data_args),
                     **asdict(train_args),
                     **asdict(log_args),
-                    "global_batch_size": train_args.per_gpu_batch_size * herring.size(),
+                    "global_batch_size": train_args.per_gpu_batch_size * smddp.size(),
                 }
                 if is_wandb_available():
                     wandb.init(config=config, project=model_args.model_type)
@@ -685,7 +687,7 @@ def main():
         if is_final_step:
             break
 
-    if herring.rank() == 0:
+    if smddp.rank() == 0:
         pbar.close()
         logger.info(f"Finished pretraining, job name {run_name}")
 
