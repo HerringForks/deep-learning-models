@@ -70,6 +70,10 @@ if is_wandb_available():
     import wandb
 
 
+if not _PRE_TF_2_4_0:
+    os.environ['TF_XLA_FLAGS'] = "--tf_xla_auto_jit=1 --tf_xla_ops_to_cluster=Add,AddN,AddV2,All,ArgMax,AssignAddVariableOp,AssignVariableOp,BatchMatMulV2,BiasAdd,BiasAddGrad,Cast,ConcatV2,Const,Equal,Erf,Exp,ExpandDims,GatherV2,Greater,GreaterEqual,Identity,IdentityN,If,IsFinite,L2Loss,LessEqual,MatMul,Maximum,Mean,Minimum,Mul,Neg,NoOp,PartitionedCall,Pow,RandomUniform,ReadVariableOp,RealDiv,Reciprocal,Reshape,ResourceGather,Rsqrt,RsqrtGrad,SelectV2,Softmax,SparseSoftmaxCrossEntropyWithLogits,Sqrt,Square,SquaredDifference,Squeeze,StatelessIf,StridedSlice,StridedSliceGrad,Sub,Sum,Tanh,TanhGrad,Tile,Transpose,UnsortedSegmentSum,VariableShape"
+    tf.keras.mixed_precision.set_global_policy('mixed_float16')
+
 logger = logging.getLogger(__name__)
 
 
@@ -87,9 +91,15 @@ def mlm_loss_fn(
 
     denominator = tf.reduce_sum(label_weights) + 1e-5
 
-    cross_entropy_per_token = label_weights * tf.nn.sparse_softmax_cross_entropy_with_logits(
-        labels=label_ids, logits=logits_at_positions
-    )  # [b, num_masks]
+    if _PRE_TF_2_4_0:
+        cross_entropy_per_token = label_weights * tf.nn.sparse_softmax_cross_entropy_with_logits(
+            labels=label_ids, logits=logits_at_positions
+        )  # [b, num_masks]
+    else:
+        cross_entropy_per_token = label_weights * tf.cast(
+            tf.nn.sparse_softmax_cross_entropy_with_logits(labels=label_ids, logits=logits_at_positions), tf.float32
+        )
+
     cross_entropy_numerator = tf.reduce_sum(cross_entropy_per_token)  # [1]
 
     accuracy_per_token = label_weights * tf.cast(
@@ -112,9 +122,15 @@ def sop_loss_fn(
     label_truth = tf.squeeze(next_sentence_labels)  # [b]
     label_preds = tf.math.argmax(prediction_logits, -1)  # [b]
 
-    cross_entropy_batch = tf.nn.sparse_softmax_cross_entropy_with_logits(
-        labels=label_truth, logits=prediction_logits
-    )  # [b]
+    if _PRE_TF_2_4_0:
+        cross_entropy_batch = tf.nn.sparse_softmax_cross_entropy_with_logits(
+            labels=label_truth, logits=prediction_logits
+        )  # [b]
+    else:
+        cross_entropy_batch = tf.cast(
+            tf.nn.sparse_softmax_cross_entropy_with_logits(labels=label_truth, logits=prediction_logits), tf.float32
+        )
+
     accuracy_batch = tf.cast(tf.math.equal(label_truth, label_preds), tf.float32)  # [b]
 
     cross_entropy = tf.reduce_mean(cross_entropy_batch)  # [1]
@@ -448,9 +464,13 @@ def main():
     elif train_args.optimizer == "adamw":
         optimizer = get_adamw_optimizer(train_args)
 
-    optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(
-        optimizer, loss_scale="dynamic"
-    )
+    if _PRE_TF_2_4_0:
+        optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(
+            optimizer, loss_scale="dynamic"
+        )
+    else:
+        optimizer = tf.keras.mixed_precision.LossScaleOptimizer(optimizer)
+
     gradient_accumulator = GradientAccumulator()
 
     loaded_optimizer_weights = None
